@@ -1,166 +1,171 @@
 /*
- DHCP Chat  Server
-
- A simple server that distributes any incoming messages to all
- connected clients.  To use, telnet to your device's IP address and type.
- You can see the client's input in the serial monitor as well.
- Using an Arduino Wiznet Ethernet shield.
-
- THis version attempts to get an IP address using DHCP
-
- Circuit:
- * Ethernet shield attached to pins 10, 11, 12, 13
-
- created 21 May 2011
- modified 9 Apr 2012
- by Tom Igoe
- modified 02 Sept 2015
- by Arturo Guadalupi
- Based on ChatServer example by David A. Mellis
-
+ * UIPEthernet TCPServer example.
+ *
+ * UIPEthernet is a TCP/IP stack that can be used with a enc28j60 based
+ * Ethernet-shield.
+ *
+ * UIPEthernet uses the fine uIP stack by Adam Dunkels <adam@sics.se>
+ *
+ *      -----------------
+ *
+ * This Hello World example sets up a server at 192.168.1.6 on port 1000.
+ * Telnet here to access the service.  The uIP stack will also respond to
+ * pings to test if you have successfully established a TCP connection to
+ * the Arduino.
+ *
+ * This example was based upon uIP hello-world by Adam Dunkels <adam@sics.se>
+ * Ported to the Arduino IDE by Adam Nielsen <malvineous@shikadi.net>
+ * Adaption to Enc28J60 by Norbert Truchsess <norbert.truchsess@t-online.de>
  */
 
-#include <SPI.h>
-#include <EthernetENC.h>
+#include <UIPEthernet.h>
+#include <EEPROM.h>
+EthernetUDP udp;
 
-// Buffer to hold commands. 
-// Commands are 4 characters. 
-// NN:S where NN is the relay number (01 - 16) and S is the state (1 for on and 0 for off)
-// "\n" sends the command
-char buffer[80];
-
-// Holds pointer to where in the buffer to write
-int bufferLoc = 0;
+uint16_t msg_counter = 0;
+// Local mac address, initialiser can be removed (when using initMacAddress)
+uint8_t mac[6] = {0x00,0x01,0x02,0x03,0x04,0x05};
 
 // Maps position in array to pin
-const int pinMapping[] = {2, 3, 4, 5, 6, 7, 8, 9,
-    0, 1, 19, 18, 17, 16, 15, 14};
-
-// Pin numbers corresponding to 
-
-// Enter a MAC address and IP address for your controller below.
-// The IP address will be dependent on your local network.
-// gateway and subnet are optional:
-byte mac[] = {
-  0x00, 0xAA, 0xC4, 0x34, 0x12, 0x51
+const int pinMapping[] = {
+ 14, 
+ 17, 2, 3,
+ 15, 18, 1, 4,
+ 16, 19, 0, 5,
+  6,  7, 8, 9
 };
 
-/* Add this if don't want to use DHCP
-IPAddress ip(192, 168, 1, 177);
-IPAddress myDns(192, 168, 1, 1);
-IPAddress gateway(192, 168, 1, 1);
-IPAddress subnet(255, 255, 0, 0);
-*/
+// https://arduino.stackexchange.com/a/60174
+void initMacAddress() {
+  // Rather than having a fixed MAC address for an Arduino sketch,
+  // this implements a different, random address which is persistant
+  // by storing it to EEPROM (which only works when EEPROM is available).
 
-// telnet defaults to port 23
-EthernetServerPrint server(23);
-boolean gotAMessage = false; // whether or not you got a message from the client yet
+  // Here the MAC ADDRESS IS LOCATED AT ADDRESS 0 OF THE EEPROM
+  for(int i=0;i<6;i++) {
+    mac[i]=EEPROM[i];
+  }
 
+  // Generating a new MAC address if the address found is not locally
+  // Administrated.  This test requires that the 2 lower bits of the first
+  // byte are equal to "2" (bits 1 and 0).
+  // Normally it is only required that bit 1 is "1", but checking bit 0 for a 0
+  // allows to detect an uninitialized EEPROM.
+  if((mac[0]&0x03)!=2) { // Is this a locally administered address?
+    // No a locally managed address, generate random address and store it.
+    #ifdef ENABLE_MAC_INIT_MESSAGES
+      Serial.println("GENERATE NEW MAC ADDR");
+    #endif
+    randomSeed(analogRead(A7));
+    for(int i=0;i<6;i++) {
+      mac[i]=random(256);
+      if(i==0) {mac[0]&=0xFC;mac[0]|=0x2;} // Make locally administered address
+
+      EEPROM.update(i,mac[i]);
+
+      #ifdef ENABLE_MAC_INIT_MESSAGES
+        if(mac[i]<10) {Serial.print('0');}  // Print two digets
+        Serial.print(mac[i],HEX);Serial.print(":");
+      #endif
+    }
+    #ifdef ENABLE_MAC_INIT_MESSAGES
+      Serial.println();
+    #endif
+    flash(0, 200);
+    flash(0, 200);
+  } else {
+    #ifdef ENABLE_MAC_INIT_MESSAGES
+        Serial.println("mac grabbed from eeprom");
+    #endif
+    flash(0, 400);
+  }
+}
+
+void flash(uint8_t index, uint16_t milliseconds) {
+    digitalWrite(pinMapping[index], LOW);
+    delay(milliseconds);
+    digitalWrite(pinMapping[index], HIGH);
+    delay(milliseconds);
+}
 void setAllPins(int state){
   for(int n = 0; n < (sizeof(pinMapping) / sizeof(pinMapping[0])); n++){
           digitalWrite(pinMapping[n], state);
    }
 }
 
-
 void setup() {
-
-  
-  // You can use Ethernet.init(pin) to configure the CS pin
-  Ethernet.init(10);  // Most Arduino shields
-  //Ethernet.init(5);   // MKR ETH shield
-  //Ethernet.init(0);   // Teensy 2.0
-  //Ethernet.init(20);  // Teensy++ 2.0
-  //Ethernet.init(15);  // ESP8266 with Adafruit Featherwing Ethernet
-  //Ethernet.init(33);  // ESP32 with Adafruit Featherwing Ethernet
-  //Ethernet.init(13);
-
-  // Open serial communications and wait for port to open:
- // Serial.begin(9600);
-//  while (!Serial) {
-//    ; // wait for serial port to connect. Needed for native USB port only
-//  }
-
-  // start the Ethernet connection:
-//  Serial.println("Trying to get an IP address using DHCP!");
-  if (Ethernet.begin(mac) == 0) {
-//    Serial.println("Failed to configure Ethernet using DHCP!");
-    // Check for Ethernet hardware present
-    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
- //     Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
-      while (true) {
-        delay(1); // do nothing, no point running without Ethernet hardware
-      }
-    }
- //   Serial.println("Trying to get an IP address using DHCP!");
-    if (Ethernet.linkStatus() == LinkOFF) {
- //     Serial.println("Ethernet cable is not connected.");
-    }
-    // initialize the Ethernet device not using DHCP:
-    // Ethernet.begin(mac, ip, myDns, gateway, subnet);
-  } 
-  // print your local IP address:
-
-  // start listening for clients
-  server.begin();
-    // Set pins to output and low
   for(int i = 0; i < (sizeof(pinMapping) / sizeof(pinMapping[0])); i++){
     pinMode(pinMapping[i], OUTPUT);
     digitalWrite(pinMapping[i], HIGH);
   }
+  
+  initMacAddress();
+//  uint8_t mac[6] = {MACADDRESS};
+//  uint8_t myIP[4] = {MYIPADDR};
+//  uint8_t myMASK[4] = {MYIPMASK};
+//  uint8_t myDNS[4] = {MYDNS};
+//  uint8_t myGW[4] = {MYGW};
+#ifdef SERIAL_DEBUG
+  Serial.begin(9600);
+#endif
+//  Ethernet.begin(mac,myIP);
+  Ethernet.begin(mac);
+
+  int success = udp.begin(5000);
 }
 
 void loop() {
-  // wait for a new client:
-  EthernetClient client = server.available();
 
-  // when the client sends the first byte, say hello:
-  if (client) {
+  int size = udp.parsePacket();
+  char re[2] = {0x00, 0x00};
 
-    // read the bytes incoming from the client:
-    char thisChar = client.read();
-
-    // Note: char == 10 is "\n"
-    // Check if we've filled the buffer and hit a newline
-    if (thisChar == 10 && (((bufferLoc + 1) % 5) == 0) && bufferLoc < 80 && bufferLoc >= 4) {
-      
-      String firstCommand = String(buffer).substring(0,4);
-      int i = 0; // Counter used for looping through commands
-
-      // Check for initial all on or off command
-      if(firstCommand.equalsIgnoreCase("All0")){
-        i = i + 4; // Update starting point for later loop
-        setAllPins(HIGH);
-      } else if (firstCommand.equalsIgnoreCase("All1")){
-        i = i + 4;
-        setAllPins(LOW);
-      }
-
-      // Loops through remaining commands
-      for(int i = 0; i < bufferLoc; i=i+5)
+  if (size > 0) {
+    do
       {
-        int relay = String(buffer).substring(i, i+2).toInt();
-        
-        if (buffer[i + 3] == '1'){ // Turn on
-          digitalWrite(pinMapping[relay], LOW);
-        } else if (buffer[i + 3] == '0') { // Turn off
-          digitalWrite(pinMapping[relay], HIGH);
+        char* msg = (char*)malloc(size+1);
+        int len = udp.read(msg,size+1);
+        msg[len]=0;
+        if (size == 3){
+          switch (msg[0]) {
+            case 0xAA:
+                re[0] = 0xBB;
+                re[1] = 0x00;
+                break;
+            case 0xCC:
+                re[0] = highByte(msg_counter);
+                re[1] = lowByte(msg_counter);
+                msg_counter = 0;
+            case 0xDD:
+              msg_counter++;
+              for(int i; i < (sizeof(pinMapping) / sizeof(pinMapping[0])); i++){
+                if (bitRead(msg, i)) {
+                  digitalWrite(pinMapping[i], LOW);
+                } else {
+                  digitalWrite(pinMapping[i], HIGH);
+                }
+              }
+          }
         }
+        
+        free(msg);
       }
-      bufferLoc = 0;
-      client.println("OK");
+    while ((size = udp.available())>0);
 
-    } else if (thisChar == 10) {   // Did we overfill the before or hit newline before hitting buffer?
-      client.print("Invalid command: ");
-      client.println(String(buffer));
-      bufferLoc = 0;
-    } else { // Continue to fill buffer
-      buffer[bufferLoc] = thisChar;
-      bufferLoc++;
+    udp.flush();
+    int success;
+    do
+    {
+       success = udp.beginPacket(udp.remoteIP(),udp.remotePort());
     }
-//    // echo the bytes back to the client:
-//    server.write(thisChar);
-//    // echo the bytes to the server as well:
-    Ethernet.maintain();
+    while (!success);
+  
+    success = udp.print(re);
+   
+    success = udp.endPacket();
+    
+    udp.stop();
   }
+      
+    Ethernet.maintain();
+
 }

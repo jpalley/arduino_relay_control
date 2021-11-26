@@ -17,9 +17,10 @@ class RelayClient:
 
         while len(ips_remaining) > 0:
             self.socket.settimeout(1)
-            msg, (returnIP, returnPort) = self.socket.recvfrom(1)
-            if (msg != b'\xbb'):
-                raise("Invalid Handshake Msg")
+            msg, (returnIP, returnPort) = self.socket.recvfrom(3)
+            if (msg != b'\xbb\x00\x00'):
+                print(msg)
+                raise Exception("Invalid Handshake Msg: {}".format(msg))
             ips_remaining.remove(returnIP)
 
         return True
@@ -28,11 +29,14 @@ class RelayClient:
         self.socket.sendto(bytes.fromhex('CC0000'), (self.ips[ip_idx], self.port))
 
         self.socket.settimeout(1)
-        msg, (returnIP, returnPort) = self.socket.recvfrom(2)
+        msg, (returnIP, returnPort) = self.socket.recvfrom(3)
         if returnIP != self.ips[ip_idx]:
-            raise "Get frame error - invalid return IP. Only call for one device at a time"
+            raise Exception("Get frame error - invalid return IP. Only call for one device at a time")
+        if msg[0] != 0xCC:
+            raise Exception("Invalid response from get_frames: {}".format(msg))
+        return msg
+        #return int.from_bytes(msg[1:2], "big")
         
-        return int.from_bytes(msg, "big")
 
     def set_relay(self, ip_idx, relay_idx, value, send_now = False):
         if value:

@@ -2,6 +2,8 @@ from relay_client import RelayClient
 import time
 
 ips = ['127.0.0.1']
+frames_before_check = 30
+
 c = RelayClient(ips)
 if not c.handshake_all():
     raise("Can't handshake with server")
@@ -21,9 +23,9 @@ while (True):
         i = 0
 
     frame_counter += 1
-    if frame_counter >= 30:
+    if frame_counter >= frames_before_check:
+        print("Frames sent: {}. Frames recv: {}".format(frame_counter, c.get_frames(0)))
         frame_counter = 0
-        print(c.get_frames(0))
 
     time.sleep(0.03)
     

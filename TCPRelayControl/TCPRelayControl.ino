@@ -18,6 +18,7 @@
  * Adaption to Enc28J60 by Norbert Truchsess <norbert.truchsess@t-online.de>
  */
 
+#define SERIAL_DEBUG 1
 #include <UIPEthernet.h>
 #include <EEPROM.h>
 EthernetUDP udp;
@@ -105,45 +106,56 @@ void setup() {
 //  uint8_t myMASK[4] = {MYIPMASK};
 //  uint8_t myDNS[4] = {MYDNS};
 //  uint8_t myGW[4] = {MYGW};
-#ifdef SERIAL_DEBUG
+
   Serial.begin(9600);
-#endif
+  Serial.println("Begin");
 //  Ethernet.begin(mac,myIP);
   Ethernet.begin(mac);
 
-  int success = udp.begin(5000);
+  int success = udp.begin(2700);
 }
 
 void loop() {
 
   int size = udp.parsePacket();
-  char re[2] = {0x00, 0x00};
+  uint8_t re[3] = {0x00, 0x00, 0x00};
 
   if (size > 0) {
     do
       {
+        Serial.println("l1");
         char* msg = (char*)malloc(size+1);
         int len = udp.read(msg,size+1);
         msg[len]=0;
         if (size == 3){
-          switch (msg[0]) {
+          switch ((uint8_t)msg[0]) {
             case 0xAA:
+                Serial.println("Here in AA");
                 re[0] = 0xBB;
-                re[1] = 0x00;
                 break;
             case 0xCC:
-                re[0] = highByte(msg_counter);
-                re[1] = lowByte(msg_counter);
+                Serial.println("Get frames");
+                re[0] = 0xCC;
+                re[1] = highByte(msg_counter);
+                re[2] = lowByte(msg_counter);
                 msg_counter = 0;
+                break;
             case 0xDD:
               msg_counter++;
+              // There is probably a better way to do this but I'm too lazy right now to figure it out
+              uint32_t states;
+              states = (uint32_t) msg[1] << 8;
+              states |= (uint32_t) msg[2];
               for(int i; i < (sizeof(pinMapping) / sizeof(pinMapping[0])); i++){
-                if (bitRead(msg, i)) {
+                if (bitRead(states, i)) {
                   digitalWrite(pinMapping[i], LOW);
                 } else {
                   digitalWrite(pinMapping[i], HIGH);
                 }
               }
+              break;
+           default:
+            Serial.println("else");
           }
         }
         
@@ -152,18 +164,22 @@ void loop() {
     while ((size = udp.available())>0);
 
     udp.flush();
-    int success;
-    do
-    {
-       success = udp.beginPacket(udp.remoteIP(),udp.remotePort());
-    }
-    while (!success);
-  
-    success = udp.print(re);
-   
-    success = udp.endPacket();
+    if ((uint8_t)re[0] != 0x00){
+      int success;
+      int timeout = 0;
+      do
+      {
+        Serial.println("begin paccket");
+         success = udp.beginPacket(udp.remoteIP(),udp.remotePort());
+      }
+      while (!success && timeout++ < 100);
     
-    udp.stop();
+      success = udp.write(&re[0], sizeof(re));
+     
+      success = udp.endPacket();
+    }
+    
+    //udp.stop();
   }
       
     Ethernet.maintain();

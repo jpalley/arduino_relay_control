@@ -1,11 +1,14 @@
+###########################
+# Implement a server endpoint that responds like the arduino
+# Useful for testing client implementation without running on the arduino
+###############################
+
 import socket
 
 localIP     = "127.0.0.1"
 localPort   = 2700
 bufferSize  = 1024
 msg_counter = 0
-msgFromServer       = "Hello UDP Client"
-bytesToSend         = str.encode(msgFromServer)
 
 # Create a datagram socket
 
@@ -25,13 +28,11 @@ while(True):
     clientIP  = "Client IP Address:{}".format(address)
     print(clientMsg)
     print(message[0])
-    if message[0] == 0xAA:
-        UDPServerSocket.sendto(bytes.fromhex('BB00'), address)
-    elif message[0] == 0xCC:
+    if message[0] == 0xAA: #Handshake
+        UDPServerSocket.sendto(bytes.fromhex('BB0000'), address)
+    elif message[0] == 0xCC: #Message counter
         print("MSG COUNTER")
-        UDPServerSocket.sendto(msg_counter.to_bytes(2, byteorder='big'), address)
+        UDPServerSocket.sendto(b'\xcc' + msg_counter.to_bytes(2, byteorder='big'), address)
         msg_counter = 0
-    elif message[0] == 0xDD:
-        print(clientMsg)
+    elif message[0] == 0xDD: # On/off message
         msg_counter += 1
-    # Sending a reply to client

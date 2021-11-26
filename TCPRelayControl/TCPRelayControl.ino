@@ -18,11 +18,16 @@
  * Adaption to Enc28J60 by Norbert Truchsess <norbert.truchsess@t-online.de>
  */
 
-#define SERIAL_DEBUG 1
-#include <UIPEthernet.h>
-#include <EEPROM.h>
-EthernetUDP udp;
+//#define SERIAL_DEBUG 1/
 
+#include <EthernetENC.h>
+#include <EthernetUdp.h>
+#include <EEPROM.h>
+
+EthernetUDP Udp;
+
+#define UDP_TX_PACKET_MAX_SIZE 256
+char packetBuffer[UDP_TX_PACKET_MAX_SIZE];  // buffer to hold incoming packet,
 uint16_t msg_counter = 0;
 // Local mac address, initialiser can be removed (when using initMacAddress)
 uint8_t mac[6] = {0x00,0x01,0x02,0x03,0x04,0x05};
@@ -101,87 +106,81 @@ void setup() {
   }
   
   initMacAddress();
-//  uint8_t mac[6] = {MACADDRESS};
-//  uint8_t myIP[4] = {MYIPADDR};
-//  uint8_t myMASK[4] = {MYIPMASK};
-//  uint8_t myDNS[4] = {MYDNS};
-//  uint8_t myGW[4] = {MYGW};
 
-  Serial.begin(9600);
-  Serial.println("Begin");
-//  Ethernet.begin(mac,myIP);
+  #ifdef SERIAL_DEBUG
+    Serial.begin(9600);
+    Serial.println("Begin");
+   #endif
+
   Ethernet.begin(mac);
-
-  int success = udp.begin(2700);
+  // Check for Ethernet hardware present
+  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+    #ifdef SERIAL_DEBUG
+      Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+    #endif
+    while (true) {
+      delay(1); // do nothing, no point running without Ethernet hardware
+    }
+  }
+  if (Ethernet.linkStatus() == LinkOFF) {
+    #ifdef SERIAL_DEBUG
+      Serial.println("Ethernet cable is not connected.");
+    #endif
+  }
+  Udp.begin(2700);
 }
 
 void loop() {
+  Ethernet.maintain();
+  
+  int packetSize = Udp.parsePacket();
+  char re[3] = {0x00, 0x00, 0x00};
 
-  int size = udp.parsePacket();
-  uint8_t re[3] = {0x00, 0x00, 0x00};
-
-  if (size > 0) {
-    do
-      {
-        Serial.println("l1");
-        char* msg = (char*)malloc(size+1);
-        int len = udp.read(msg,size+1);
-        msg[len]=0;
-        if (size == 3){
-          switch ((uint8_t)msg[0]) {
-            case 0xAA:
-                Serial.println("Here in AA");
-                re[0] = 0xBB;
-                break;
-            case 0xCC:
-                Serial.println("Get frames");
-                re[0] = 0xCC;
-                re[1] = highByte(msg_counter);
-                re[2] = lowByte(msg_counter);
-                msg_counter = 0;
-                break;
-            case 0xDD:
-              msg_counter++;
-              // There is probably a better way to do this but I'm too lazy right now to figure it out
-              uint32_t states;
-              states = (uint32_t) msg[1] << 8;
-              states |= (uint32_t) msg[2];
-              for(int i; i < (sizeof(pinMapping) / sizeof(pinMapping[0])); i++){
-                if (bitRead(states, i)) {
-                  digitalWrite(pinMapping[i], LOW);
-                } else {
-                  digitalWrite(pinMapping[i], HIGH);
-                }
-              }
+  if (packetSize > 0) {
+      Serial.println("l1");
+      Udp.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
+      if (packetSize == 3){
+        switch ((uint8_t)packetBuffer[0]) {
+          case 0xAA:
+              Serial.println("Here in AA");
+              re[0] = 0xBB;
               break;
-           default:
-            Serial.println("else");
-          }
+          case 0xCC:
+              Serial.println("Get frames");
+              re[0] = 0xCC;
+              re[1] = highByte(msg_counter);
+              re[2] = lowByte(msg_counter);
+              msg_counter = 0;
+              break;
+          case 0xDD:
+            msg_counter++;
+            // There is probably a better way to do this but I'm too lazy right now to figure it out
+            uint32_t states = 0;
+            states = (uint32_t) packetBuffer[1] << 8;
+            states |= (uint32_t) packetBuffer[2];
+            for(int i = 0; i < (sizeof(pinMapping) / sizeof(pinMapping[0])); i++){
+              if (bitRead(states, i) == 1) {
+                digitalWrite(pinMapping[i], LOW);
+              } else {
+                digitalWrite(pinMapping[i], HIGH);
+              }
+            }
+            break;
+         default:
+          Serial.println("else");
         }
+
+      if((uint8_t)re[0] != 0x00){
+        Udp.beginPacket(Udp.remoteIP(),Udp.remotePort());
         
-        free(msg);
+        Udp.write((const char*)&re, 3);
+       
+        Udp.endPacket();
       }
-    while ((size = udp.available())>0);
-
-    udp.flush();
-    if ((uint8_t)re[0] != 0x00){
-      int success;
-      int timeout = 0;
-      do
-      {
-        Serial.println("begin paccket");
-         success = udp.beginPacket(udp.remoteIP(),udp.remotePort());
-      }
-      while (!success && timeout++ < 100);
-    
-      success = udp.write(&re[0], sizeof(re));
-     
-      success = udp.endPacket();
     }
-    
-    //udp.stop();
+        
   }
-      
-    Ethernet.maintain();
-
+       
+  delay(10);
 }
+     

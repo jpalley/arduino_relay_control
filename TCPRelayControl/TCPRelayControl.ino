@@ -137,16 +137,13 @@ void loop() {
   char re[3] = {0x00, 0x00, 0x00};
 
   if (packetSize > 0) {
-      Serial.println("l1");
       Udp.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
       if (packetSize == 3){
         switch ((uint8_t)packetBuffer[0]) {
           case 0xAA:
-              Serial.println("Here in AA");
               re[0] = 0xBB;
               break;
           case 0xCC:
-              Serial.println("Get frames");
               re[0] = 0xCC;
               re[1] = highByte(msg_counter);
               re[2] = lowByte(msg_counter);
@@ -166,8 +163,6 @@ void loop() {
               }
             }
             break;
-         default:
-          Serial.println("else");
         }
 
       if((uint8_t)re[0] != 0x00){
